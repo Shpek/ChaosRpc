@@ -82,7 +82,7 @@ namespace ChaosRpc
 		private static readonly Dictionary<Type, SerializableTypeInfo> SerializableTypeCache =
 			new Dictionary<Type, SerializableTypeInfo>();
 		
-		public static void SerializeParameter(BinaryWriter writer, ParameterInfo paramInfo, object value)
+		public static void SerializeParameter<T>(BinaryWriter writer, ParameterInfo paramInfo, T value)
 		{
 			Serialize(writer, paramInfo.ParameterType, NullableParamCache.Contains(paramInfo), value);
 		}
@@ -92,7 +92,7 @@ namespace ChaosRpc
 			return Deserialize(reader, paramInfo.ParameterType, NullableParamCache.Contains(paramInfo));
 		}
 
-		public static void Serialize(BinaryWriter writer, Type type, bool nullable, object value)
+		public static void Serialize<T>(BinaryWriter writer, Type type, bool nullable, T value)
 		{
 			if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof (System.Nullable<>)) {
 				Type underlyingType = type.GetGenericArguments()[0];
@@ -132,7 +132,7 @@ namespace ChaosRpc
 
 			if (serTypeInfo != null) {
 				if (serTypeInfo.SerializeMethod.IsStatic) {
-					serTypeInfo.SerializeMethod.Invoke(null, new[] {value, writer});
+					serTypeInfo.SerializeMethod.Invoke(null, new object[] {value, writer});
 				} else {
 					serTypeInfo.SerializeMethod.Invoke(value, new object[] {writer});
 				}

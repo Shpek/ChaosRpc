@@ -275,7 +275,7 @@ namespace ChaosRpc
 			if (OnDataOut != null)
 				OnDataOut(_currentCallStream.GetBuffer(), 0, checked((int) _currentCallStream.Length));
 
-			var returnType = _currentCallMethod.ReturnType;
+			var returnType = _currentCallMethod.MethodInfo.ReturnType;
 
 			if (_currentCallFuture == null && returnType != typeof (void) && returnType.IsValueType)
 				return Activator.CreateInstance(returnType);

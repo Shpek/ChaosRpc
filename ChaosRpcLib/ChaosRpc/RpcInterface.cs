@@ -108,7 +108,9 @@ namespace ChaosRpc
 			RpcMethodInfo[] methods = RpcInterface.GetOrderedMethods(type);
 			MethodInfo methodCall = typeof (ICallInterceptor).GetMethod("MethodCall");
 			MethodInfo getArgsArray = typeof (ICallInterceptor).GetMethod("GetArgsArray");
-			MethodInfo genericPushArg = typeof (ICallInterceptor).GetMethod("GetArg");
+			MethodInfo beginCall = typeof (ICallInterceptor).GetMethod("BeginCall");
+			MethodInfo genericPushArg = typeof (ICallInterceptor).GetMethod("PushArg");
+			MethodInfo completeCall = typeof (ICallInterceptor).GetMethod("CompleteCall");
 			var genericPushArgMethods = new Dictionary<Type, MethodInfo>();
 
 			for (int ord = 0; ord < methods.Length; ++ ord) {
@@ -133,49 +135,83 @@ namespace ChaosRpc
 					paramTypes);
 
 				ILGenerator gen = mtb.GetILGenerator();
-				gen.DeclareLocal(typeof (object[]));
 
+				// Interceptor.BeginCall(3, Context);
 				gen.Emit(OpCodes.Ldarg_0);
 				gen.Emit(OpCodes.Ldfld, interceptorFi);
-				gen.Emit(OpCodes.Ldc_I4, paramInfo.Length);
-				gen.EmitCall(OpCodes.Callvirt, getArgsArray, null);
-				gen.Emit(OpCodes.Stloc_0);
-				
-				gen.Emit(OpCodes.Ldarg_0);
-				gen.Emit(OpCodes.Ldfld, interceptorFi);
-
 				gen.Emit(OpCodes.Ldc_I4, ord);
-
 				gen.Emit(OpCodes.Ldarg_0);
 				gen.Emit(OpCodes.Ldfld, contextFi);
+				gen.Emit(OpCodes.Callvirt, beginCall);
 
+				// Call PushArg for each argument
 				for (int i = 0, n = paramInfo.Length; i < n; ++ i) {
 					Type paramType = paramInfo[i].ParameterType;
+					MethodInfo pushArgMi = genericPushArgMethods[paramType];
 
-					if (paramType.IsValueType) {
-						gen.Emit(OpCodes.Ldloc_0);
-						gen.Emit(OpCodes.Ldc_I4, i);
-						gen.Emit(OpCodes.Ldarg, i + 1);
-						gen.Emit(OpCodes.Box, paramType);
-						gen.Emit(OpCodes.Stelem_Ref);
-					} else {
-						gen.Emit(OpCodes.Ldloc_0);
-						gen.Emit(OpCodes.Ldc_I4, i);
-						gen.Emit(OpCodes.Ldarg, i + 1);
-						gen.Emit(OpCodes.Stelem_Ref);
-					}
+					// Interceptor.PushArg(arg_i);
+					gen.Emit(OpCodes.Ldarg_0);
+					gen.Emit(OpCodes.Ldfld, interceptorFi);
+					gen.Emit(OpCodes.Ldarg, i + 1);
+					gen.Emit(OpCodes.Callvirt, pushArgMi);
 				}
 
-				gen.Emit(OpCodes.Ldloc_0);
+				// return Interceptor.CompleteCall();
+				gen.Emit(OpCodes.Ldarg_0);
+				gen.Emit(OpCodes.Ldfld, interceptorFi);
+				gen.Emit(OpCodes.Callvirt, completeCall);
 
-				gen.EmitCall(OpCodes.Callvirt, methodCall, null);
-
-				if (mtb.ReturnType == typeof (void))
+				if (mtb.ReturnType == typeof (void)) {
 					gen.Emit(OpCodes.Pop);
-				else
+				} else {
 					gen.Emit(OpCodes.Castclass, mtb.ReturnType);
+				}
 
 				gen.Emit(OpCodes.Ret);
+
+				//gen.DeclareLocal(typeof (object[]));
+
+				//gen.Emit(OpCodes.Ldarg_0);
+				//gen.Emit(OpCodes.Ldfld, interceptorFi);
+				//gen.Emit(OpCodes.Ldc_I4, paramInfo.Length);
+				//gen.EmitCall(OpCodes.Callvirt, getArgsArray, null);
+				//gen.Emit(OpCodes.Stloc_0);
+
+				//gen.Emit(OpCodes.Ldarg_0);
+				//gen.Emit(OpCodes.Ldfld, interceptorFi);
+
+				//gen.Emit(OpCodes.Ldc_I4, ord);
+
+				//gen.Emit(OpCodes.Ldarg_0);
+				//gen.Emit(OpCodes.Ldfld, contextFi);
+
+				//for (int i = 0, n = paramInfo.Length; i < n; ++ i) {
+				//	Type paramType = paramInfo[i].ParameterType;
+
+				//	if (paramType.IsValueType) {
+				//		gen.Emit(OpCodes.Ldloc_0);
+				//		gen.Emit(OpCodes.Ldc_I4, i);
+				//		gen.Emit(OpCodes.Ldarg, i + 1);
+				//		gen.Emit(OpCodes.Box, paramType);
+				//		gen.Emit(OpCodes.Stelem_Ref);
+				//	} else {
+				//		gen.Emit(OpCodes.Ldloc_0);
+				//		gen.Emit(OpCodes.Ldc_I4, i);
+				//		gen.Emit(OpCodes.Ldarg, i + 1);
+				//		gen.Emit(OpCodes.Stelem_Ref);
+				//	}
+				//}
+
+				//gen.Emit(OpCodes.Ldloc_0);
+
+				//gen.EmitCall(OpCodes.Callvirt, methodCall, null);
+
+				//if (mtb.ReturnType == typeof (void))
+				//	gen.Emit(OpCodes.Pop);
+				//else
+				//	gen.Emit(OpCodes.Castclass, mtb.ReturnType);
+
+				//gen.Emit(OpCodes.Ret);
 			}
 
 			return tb.CreateType();
@@ -303,10 +339,10 @@ public class TestInterceptor
 	private ICallInterceptor _interceptor;
 	private object _context;
 
-	public IFuture Test()
+	public void Test()
 	{
 		_interceptor.BeginCall(3, _context);
 		_interceptor.PushArg(5);
-		return (IFuture) _interceptor.CompleteCall();
+		_interceptor.CompleteCall();
 	}
 }
