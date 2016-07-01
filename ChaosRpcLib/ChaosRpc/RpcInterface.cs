@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using ChaosRpc;
 
 namespace ChaosRpc
 {
@@ -30,8 +29,6 @@ namespace ChaosRpc
 		private static readonly Dictionary<Type, RpcMethodInfo[]> InterfaceTypeToMethodInfos =
 			new Dictionary<Type, RpcMethodInfo[]>();
 
-		private static ModuleBuilder _moduleBuilder;
-
 		public RpcInterface(byte ordinal)
 		{
 			Ordinal = ordinal;
@@ -39,21 +36,21 @@ namespace ChaosRpc
 
 		static RpcInterface()
 		{
-			var executingAssembly = Assembly.GetExecutingAssembly();
-			var executingAssemblyName = executingAssembly.FullName;
-			Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+			Init();
+		}
 
-			foreach (var assembly in assemblies) {
-				if (assembly != executingAssembly) {
-					// Find if the executing assembly is referenced by the current.
-					// If it is it may contain interfaces marked with RpcInterface
-					var referencedAssemblies = assembly.GetReferencedAssemblies();
-					var referenced = referencedAssemblies.Any(refAssembly => refAssembly.FullName == executingAssemblyName);
+		public static void Init()
+		{
+			const string assemblyName = "RpcDynamicProxies";
 
-					if (!referenced)
-						continue;
-				}
+			AssemblyBuilder assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(
+				new AssemblyName(assemblyName),
+				AssemblyBuilderAccess.Run);
 
+			ModuleBuilder moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName);
+			IList<Assembly> assembliesToScan = GetReferencedAssemblies();
+
+			foreach (var assembly in assembliesToScan) {
 				var checkedTypes = new HashSet<Type>();
 
 				foreach (Type type in assembly.GetTypes()) {
@@ -64,10 +61,35 @@ namespace ChaosRpc
 							throw new ArgumentException("Duplicate RpcInterface ordinal " + iface.Ordinal + " in " + type.Name);
 
 						OrdinalToInterfaceType[iface.Ordinal] = type;
-						InterfaceTypeToProxyType[type] = CreateDynamicProxyType(type, checkedTypes);
+						InterfaceTypeToProxyType[type] = CreateDynamicProxyType(moduleBuilder, type, checkedTypes);
 					}
 				}
 			}
+		}
+
+		private static IList<Assembly> GetReferencedAssemblies()
+		{
+			var executingAssembly = Assembly.GetExecutingAssembly();
+			var executingAssemblyName = executingAssembly.FullName;
+			Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+			var refs = new List<Assembly>();
+
+			foreach (var assembly in assemblies) {
+				if (assembly == executingAssembly) {
+					refs.Add(assembly);
+				} else {
+					// Find if the executing assembly is referenced by the current.
+					// If it is it may contain interfaces marked with RpcInterface
+					var referencedAssemblies = assembly.GetReferencedAssemblies();
+					var referenced = referencedAssemblies.Any(refAssembly => refAssembly.FullName == executingAssemblyName);
+
+					if (referenced) {
+						refs.Add(assembly);
+					}
+				}
+			}
+
+			return refs;
 		}
 
 		// The generated code for the proxy type is like this:
@@ -86,28 +108,13 @@ namespace ChaosRpc
 		//		}
 		//	}
 
-		private static Type CreateDynamicProxyType(Type type, HashSet<Type> checkedTypes)
+		private static Type CreateDynamicProxyType(ModuleBuilder moduleBuilder, Type type, HashSet<Type> checkedTypes)
 		{
-			if (_moduleBuilder == null) {
-				const string assemblyName = "RpcDynamicProxies";
-
-				AssemblyBuilder assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(
-					new AssemblyName(assemblyName),
-					AssemblyBuilderAccess.Run
-					);
-
-				_moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName);
-			}
-
-			TypeBuilder tb = _moduleBuilder.DefineType(type.Name + "RpcProxy", TypeAttributes.Public);
+			TypeBuilder tb = moduleBuilder.DefineType(type.Name + "RpcProxy", TypeAttributes.Public);
 			tb.AddInterfaceImplementation(type);
-
 			FieldBuilder interceptorFi = tb.DefineField("Interceptor", typeof (ICallInterceptor), FieldAttributes.Public);
 			FieldBuilder contextFi = tb.DefineField("Context", typeof (object), FieldAttributes.Public);
-
-			RpcMethodInfo[] methods = RpcInterface.GetOrderedMethods(type);
-			MethodInfo methodCall = typeof (ICallInterceptor).GetMethod("MethodCall");
-			MethodInfo getArgsArray = typeof (ICallInterceptor).GetMethod("GetArgsArray");
+			RpcMethodInfo[] methods = GetOrderedMethods(type);
 			MethodInfo beginCall = typeof (ICallInterceptor).GetMethod("BeginCall");
 			MethodInfo genericPushArg = typeof (ICallInterceptor).GetMethod("PushArg");
 			MethodInfo completeCall = typeof (ICallInterceptor).GetMethod("CompleteCall");
@@ -168,50 +175,6 @@ namespace ChaosRpc
 				}
 
 				gen.Emit(OpCodes.Ret);
-
-				//gen.DeclareLocal(typeof (object[]));
-
-				//gen.Emit(OpCodes.Ldarg_0);
-				//gen.Emit(OpCodes.Ldfld, interceptorFi);
-				//gen.Emit(OpCodes.Ldc_I4, paramInfo.Length);
-				//gen.EmitCall(OpCodes.Callvirt, getArgsArray, null);
-				//gen.Emit(OpCodes.Stloc_0);
-
-				//gen.Emit(OpCodes.Ldarg_0);
-				//gen.Emit(OpCodes.Ldfld, interceptorFi);
-
-				//gen.Emit(OpCodes.Ldc_I4, ord);
-
-				//gen.Emit(OpCodes.Ldarg_0);
-				//gen.Emit(OpCodes.Ldfld, contextFi);
-
-				//for (int i = 0, n = paramInfo.Length; i < n; ++ i) {
-				//	Type paramType = paramInfo[i].ParameterType;
-
-				//	if (paramType.IsValueType) {
-				//		gen.Emit(OpCodes.Ldloc_0);
-				//		gen.Emit(OpCodes.Ldc_I4, i);
-				//		gen.Emit(OpCodes.Ldarg, i + 1);
-				//		gen.Emit(OpCodes.Box, paramType);
-				//		gen.Emit(OpCodes.Stelem_Ref);
-				//	} else {
-				//		gen.Emit(OpCodes.Ldloc_0);
-				//		gen.Emit(OpCodes.Ldc_I4, i);
-				//		gen.Emit(OpCodes.Ldarg, i + 1);
-				//		gen.Emit(OpCodes.Stelem_Ref);
-				//	}
-				//}
-
-				//gen.Emit(OpCodes.Ldloc_0);
-
-				//gen.EmitCall(OpCodes.Callvirt, methodCall, null);
-
-				//if (mtb.ReturnType == typeof (void))
-				//	gen.Emit(OpCodes.Pop);
-				//else
-				//	gen.Emit(OpCodes.Castclass, mtb.ReturnType);
-
-				//gen.Emit(OpCodes.Ret);
 			}
 
 			return tb.CreateType();
@@ -312,9 +275,6 @@ namespace ChaosRpc
 
 	public interface ICallInterceptor
 	{
-		object[] GetArgsArray(int paramsCount);
-		object MethodCall(int methodOrdinal, object context, object[] args);
-
 		void BeginCall(int methodOrdinal, object context);
 		void PushArg<T>(T arg);
 		object CompleteCall();
@@ -334,15 +294,15 @@ namespace ChaosRpc
 	}
 }
 
-public class TestInterceptor
-{
-	private ICallInterceptor _interceptor;
-	private object _context;
+//public class TestInterceptor
+//{
+//	private ICallInterceptor _interceptor;
+//	private object _context;
 
-	public void Test()
-	{
-		_interceptor.BeginCall(3, _context);
-		_interceptor.PushArg(5);
-		_interceptor.CompleteCall();
-	}
-}
+//	public void Test()
+//	{
+//		_interceptor.BeginCall(3, _context);
+//		_interceptor.PushArg(5);
+//		_interceptor.CompleteCall();
+//	}
+//}

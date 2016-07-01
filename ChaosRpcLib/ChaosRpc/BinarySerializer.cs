@@ -258,7 +258,6 @@ namespace ChaosRpc
 		{
 			MethodInfo methodInfo = rpcMethodInfo.MethodInfo;
 			var paramsInfo = methodInfo.GetParameters();
-			
 
 			for (int i = 0, n = paramsInfo.Length; i < n; ++i) {
 				ParameterInfo paramInfo = paramsInfo[i];

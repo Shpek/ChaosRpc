@@ -60,8 +60,12 @@ namespace ChaosRpc
 		private readonly Dictionary<Type, ClientData> _clientsData = new Dictionary<Type, ClientData>();
 		private readonly Dictionary<byte, HandlerData> _handlersData = new Dictionary<byte, HandlerData>();
 		private readonly Dictionary<int, object> _resultFutures = new Dictionary<int, object>();
-		private readonly List<object[]> _argumentArrays = new List<object[]>(); 
 		private byte _nextCallId;
+		private RpcMethodInfo _currentCallMethod;
+		private MemoryStream _currentCallStream;
+		private BinaryWriter _currentCallWriter;
+		private object _currentCallFuture;
+		private int _currentCallArg;
 
 		public T GetRpcInterface<T>() where T : class
 		{
@@ -172,67 +176,6 @@ namespace ChaosRpc
 			};
 		}
 
-		public object[] GetArgsArray(int paramsCount)
-		{
-			while (_argumentArrays.Count < paramsCount + 1) {
-				_argumentArrays.Add(new object[_argumentArrays.Count]);
-			}
-
-			return _argumentArrays[paramsCount];
-		}
-
-		public object MethodCall(int methodOrdinal, object context, object[] args)
-		{
-			var clientData = (ClientData) context;
-			RpcMethodInfo rpcMethodInfo = clientData.InterfaceMethods[methodOrdinal];
-			MethodInfo methodInfo = rpcMethodInfo.MethodInfo;
-			object resultFuture = null;
-
-			if (rpcMethodInfo.HasReturnType) {
-				resultFuture = Activator.CreateInstance(rpcMethodInfo.ReturnType);
-				++ _nextCallId;
-
-				if (_nextCallId >= ResponseTypeFlag)
-					_nextCallId = 1;
-
-				if (_resultFutures.ContainsKey(_nextCallId))
-					throw new InvalidOperationException("CallId overrun.");
-
-				_resultFutures[_nextCallId] = resultFuture;
-			}
-
-			MemoryStream memStream = new MemoryStream(64);
-			var writer = new BinaryWriter(memStream);
-			writer.Write((byte) clientData.InterfaceOrdinal);
-			writer.Write((byte) methodOrdinal);
-
-			if (resultFuture != null)
-				writer.Write((byte) _nextCallId);
-
-			ParameterInfo[] paramInfos = methodInfo.GetParameters();
-
-			for (int i = 0, n = paramInfos.Length; i < n; ++ i) {
-				var paramInfo = paramInfos[i];
-				BinarySerializer.SerializeParameter(writer, paramInfo, args[i]);
-			}
-
-			if (OnDataOut != null)
-				OnDataOut(memStream.GetBuffer(), 0, checked((int) memStream.Length));
-
-			var returnType = methodInfo.ReturnType;
-
-			if (resultFuture == null && returnType != typeof (void) && returnType.IsValueType)
-				return Activator.CreateInstance(returnType);
-
-			return resultFuture;
-		}
-
-		private RpcMethodInfo _currentCallMethod;
-		private MemoryStream _currentCallStream;
-		private BinaryWriter _currentCallWriter;
-		private object _currentCallFuture;
-		private int _currentCallArg;
-
 		public void BeginCall(int methodOrdinal, object context)
 		{
 			var clientData = (ClientData) context;
@@ -281,11 +224,6 @@ namespace ChaosRpc
 				return Activator.CreateInstance(returnType);
 
 			return _currentCallFuture;
-		}
-
-		public object MethodCall1(int methodOrdinal, object context, object arg1)
-		{
-			return MethodCall(methodOrdinal, context, new[] {arg1});
 		}
 
 		private void ProcessHandlerCall(BinaryReader reader, byte ifaceOrdinal, object context)
